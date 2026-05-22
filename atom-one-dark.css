@@ -1,0 +1,132 @@
+/*
+ * atom-one-dark.css — GitShare Terminal built-in theme
+ * Adapted from Highlight.js Atom One Dark theme.
+ * All colors chosen to match the original Atom One Dark palette exactly.
+ */
+
+/* Base colours (applied to the <code> element) */
+.hljs {
+  color: #abb2bf;
+  background: transparent;
+}
+
+/* Comments — muted italic */
+.hljs-comment,
+.hljs-quote {
+  color: #5c6370;
+  font-style: italic;
+}
+
+/* Strings */
+.hljs-doctag,
+.hljs-string,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-variable.language_ {
+  color: #98c379;
+}
+
+/* Numbers, literals */
+.hljs-number,
+.hljs-literal,
+.hljs-regexp,
+.hljs-link {
+  color: #d19a66;
+}
+
+/* Keywords — purple/blue */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-deletion,
+.hljs-title.function_,
+.hljs-section {
+  color: #c678dd;
+}
+
+/* Built-ins — cyan */
+.hljs-built_in,
+.hljs-class .hljs-title,
+.hljs-title.class_,
+.hljs-selector-class {
+  color: #56b6c2;
+}
+
+/* Types — warm yellow */
+.hljs-type {
+  color: #e5c07b;
+}
+
+/* Attributes, tags */
+.hljs-attr,
+.hljs-attribute {
+  color: #e06c75;
+}
+
+.hljs-tag {
+  color: #e06c75;
+}
+
+/* Function titles — blue */
+.hljs-title,
+.hljs-title.function_ {
+  color: #61afef;
+}
+
+/* Variables */
+.hljs-variable,
+.hljs-template-variable {
+  color: #e06c75;
+}
+
+/* Params */
+.hljs-params {
+  color: #abb2bf;
+}
+
+/* Operators */
+.hljs-operator {
+  color: #56b6c2;
+}
+
+/* Punctuation */
+.hljs-punctuation {
+  color: #abb2bf;
+}
+
+/* Meta / preprocessor */
+.hljs-meta,
+.hljs-meta .hljs-keyword {
+  color: #e5c07b;
+}
+
+/* Properties (CSS) */
+.hljs-property {
+  color: #e06c75;
+}
+
+/* Selector */
+.hljs-selector-class,
+.hljs-selector-id,
+.hljs-selector-pseudo {
+  color: #e06c75;
+}
+
+/* Name */
+.hljs-name {
+  color: #e06c75;
+}
+
+/* Additions / deletions (diff) */
+.hljs-addition {
+  color: #98c379;
+  background: rgba(152,195,121,0.1);
+}
+.hljs-deletion {
+  color: #e06c75;
+  background: rgba(224,108,117,0.1);
+}
+
+/* Emphasis helpers */
+.hljs-emphasis  { font-style: italic; }
+.hljs-strong    { font-weight: bold; }

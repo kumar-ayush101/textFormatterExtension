@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitShare Terminal</title>
+
+  <!--
+    !! CSP FIX !!
+    All scripts and stylesheets are loaded from local extension files (lib/).
+    Chrome MV3 extension pages only allow script-src 'self' — no CDN URLs.
+    The highlighter.js file provides a drop-in hljs-compatible API with
+    zero external dependencies.
+  -->
+  <link rel="stylesheet" href="atom-one-dark.css">
+
+  <style>
+    /* ── Design tokens ──────────────────────────────────────────────────── */
+    :root {
+      --bg-void:        #0a0a0d;
+      --bg-shell:       #0f0f13;
+      --bg-header:      #161620;
+      --bg-gutter:      #13131a;
+      --bg-code:        #0f0f13;
+      --bg-statusbar:   #0c0c10;
+
+      --border-subtle:  rgba(255,255,255,0.07);
+      --border-glow:    rgba(99,179,255,0.18);
+
+      --text-primary:   #abb2bf;
+      --text-muted:     #52525b;
+      --text-faint:     #27272f;
+      --text-gutter:    #3a3a4a;
+
+      --accent-blue:    #61afef;
+      --accent-teal:    #56b6c2;
+      --accent-amber:   #e5c07b;
+      --accent-red:     #e06c75;
+      --accent-green:   #98c379;
+      --accent-purple:  #c678dd;
+
+      --dot-red:    #ff5f57;
+      --dot-yellow: #ffbd2e;
+      --dot-green:  #28c940;
+
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+      --font-ui:   'SF Mono', 'Segoe UI', system-ui, sans-serif;
+
+      --radius-shell: 10px;
+      --radius-badge: 4px;
+      --scrollbar-w:  5px;
+    }
+
+    /* ── Reset ──────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg-void);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      height: 100vh;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Outer shell ────────────────────────────────────────────────────── */
+    .terminal-shell {
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 16px);
+      margin: 8px;
+      border-radius: var(--radius-shell);
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-shell);
+      box-shadow:
+        0 0 0 1px rgba(0,0,0,0.6),
+        0 20px 60px rgba(0,0,0,0.7),
+        inset 0 1px 0 rgba(255,255,255,0.04);
+      overflow: hidden;
+    }
+
+    /* ── Title bar ──────────────────────────────────────────────────────── */
+    .titlebar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 14px;
+      background: var(--bg-header);
+      border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .dots { display: flex; gap: 6px; align-items: center; }
+    .dot {
+      width: 11px; height: 11px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      transition: filter 0.15s;
+    }
+    .dot-r { background: var(--dot-red);    box-shadow: 0 0 5px rgba(255,95,87,0.4); }
+    .dot-y { background: var(--dot-yellow); }
+    .dot-g { background: var(--dot-green);  box-shadow: 0 0 5px rgba(40,201,64,0.3); }
+
+    .titlebar-center {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .prompt-icon { color: var(--accent-teal); font-size: 11px; opacity: 0.85; }
+
+    .title-text {
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+      font-family: var(--font-ui);
+    }
+
+    .lang-badge {
+      font-size: 9.5px;
+      font-family: var(--font-ui);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent-blue);
+      background: rgba(97,175,239,0.1);
+      border: 1px solid rgba(97,175,239,0.2);
+      border-radius: var(--radius-badge);
+      padding: 1px 5px;
+      opacity: 0;
+      transform: translateY(2px);
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+    .lang-badge.visible { opacity: 1; transform: translateY(0); }
+
+    /* Copy button */
+    .copy-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-badge);
+      color: var(--text-muted);
+      font-family: var(--font-ui);
+      font-size: 10px;
+      padding: 3px 8px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+      letter-spacing: 0.03em;
+    }
+    .copy-btn:hover { background: rgba(255,255,255,0.09); color: var(--text-primary); border-color: rgba(255,255,255,0.14); }
+    .copy-btn.copied { color: var(--accent-green); border-color: rgba(152,195,121,0.35); background: rgba(152,195,121,0.08); }
+    .copy-btn svg { width: 10px; height: 10px; }
+
+    /* ── Line-number gutter + code body ─────────────────────────────────── */
+    .code-viewport {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .gutter {
+      flex-shrink: 0;
+      width: 46px;
+      padding: 16px 0;
+      background: var(--bg-gutter);
+      border-right: 1px solid var(--border-subtle);
+      overflow: hidden;
+      text-align: right;
+      font-size: 11.5px;
+      line-height: 1.7;
+      color: var(--text-gutter);
+      user-select: none;
+      transition: opacity 0.2s;
+    }
+    .gutter.hidden { opacity: 0; pointer-events: none; }
+    .gutter-inner { padding-right: 10px; }
+
+    .code-scroll {
+      flex: 1;
+      overflow: auto;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.1) transparent;
+    }
+    .code-scroll::-webkit-scrollbar { width: var(--scrollbar-w); height: var(--scrollbar-w); }
+    .code-scroll::-webkit-scrollbar-track { background: transparent; }
+    .code-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    .code-scroll::-webkit-scrollbar-corner { background: transparent; }
+
+    /* The actual <pre><code> area */
+    .code-body {
+      padding: 16px 20px 16px 16px;
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.7;
+      white-space: pre;
+      word-break: normal;
+      overflow-wrap: normal;
+      tab-size: 2;
+      background: transparent;
+      color: var(--text-primary);
+    }
+
+    /* hljs overrides — keep background transparent */
+    .hljs { background: transparent !important; padding: 0 !important; font-size: inherit !important; line-height: inherit !important; }
+
+    /* Per-line hover highlight */
+    .code-body .line {
+      display: block;
+      border-radius: 2px;
+      transition: background 0.08s;
+      padding: 0 4px;
+      margin: 0 -4px;
+    }
+    .code-body .line:hover { background: rgba(255,255,255,0.04); }
+
+    /* ── Placeholder ─────────────────────────────────────────────────────── */
+    .placeholder-wrap {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      gap: 14px;
+      padding: 32px 24px;
+      text-align: center;
+    }
+    .placeholder-wrap.visible { display: flex; }
+
+    .placeholder-icon { font-size: 28px; opacity: 0.18; filter: grayscale(1); }
+
+    .placeholder-title {
+      font-family: var(--font-ui);
+      font-size: 13px;
+      color: var(--text-muted);
+      letter-spacing: 0.01em;
+    }
+
+    .placeholder-steps { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-ui);
+      font-size: 10.5px;
+      color: var(--text-faint);
+    }
+    .step-num {
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px;
+      flex-shrink: 0;
+    }
+
+    /* ── Status bar ──────────────────────────────────────────────────────── */
+    .statusbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      height: 22px;
+      background: var(--bg-statusbar);
+      border-top: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .status-left, .status-right { display: flex; align-items: center; gap: 10px; }
+
+    .status-item {
+      font-family: var(--font-ui);
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.03em;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .status-item.accent { color: var(--accent-teal); }
+
+    .status-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--text-faint);
+    }
+    .status-dot.live {
+      background: var(--accent-green);
+      box-shadow: 0 0 4px var(--accent-green);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    /* ── Fade-in for new content ─────────────────────────────────────────── */
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(3px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .code-scroll.animating .code-body {
+      animation: fadeSlideIn 0.18s ease forwards;
+    }
+  </style>
+</head>
+<body>
+
+<div class="terminal-shell">
+
+  <!-- ── Title bar ──────────────────────────────────────────────────────── -->
+  <div class="titlebar">
+    <div class="dots">
+      <div class="dot dot-r"></div>
+      <div class="dot dot-y"></div>
+      <div class="dot dot-g"></div>
+    </div>
+
+    <div class="titlebar-center">
+      <span class="prompt-icon">❯</span>
+      <span class="title-text">gitshare-terminal</span>
+      <span class="lang-badge" id="lang-badge">—</span>
+    </div>
+
+    <button class="copy-btn" id="copy-btn" title="Copy to clipboard">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="5" y="5" width="8" height="9" rx="1.5"/>
+        <path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H11"/>
+      </svg>
+      Copy
+    </button>
+  </div>
+
+  <!-- ── Code viewport ──────────────────────────────────────────────────── -->
+  <div class="code-viewport" id="code-viewport">
+
+    <div class="gutter hidden" id="gutter">
+      <div class="gutter-inner" id="gutter-inner"></div>
+    </div>
+
+    <div class="code-scroll" id="code-scroll">
+      <pre class="code-body" id="code-body"><code id="code-el"></code></pre>
+    </div>
+
+    <div class="placeholder-wrap visible" id="placeholder">
+      <div class="placeholder-icon">⌨︎</div>
+      <div class="placeholder-title">GitShare Terminal</div>
+      <div class="placeholder-steps">
+        <div class="step"><div class="step-num">1</div>Highlight any code on a webpage</div>
+        <div class="step"><div class="step-num">2</div>Right-click → "Send to GitShare Terminal"</div>
+        <div class="step"><div class="step-num">3</div>Watch it render with syntax highlighting</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Status bar ─────────────────────────────────────────────────────── -->
+  <div class="statusbar">
+    <div class="status-left">
+      <div class="status-item">
+        <div class="status-dot live" id="live-dot"></div>
+        <span id="status-live">listening</span>
+      </div>
+    </div>
+    <div class="status-right">
+      <div class="status-item" id="status-lines" style="display:none">
+        <span id="line-count">0</span> lines
+      </div>
+      <div class="status-item" id="status-chars" style="display:none">
+        <span id="char-count">0</span> chars
+      </div>
+      <div class="status-item accent" id="status-lang" style="display:none">
+        <span id="lang-label">plain</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!--
+  Load local scripts only — no CDN, no CSP violations.
+  highlighter.js exposes window.hljs with the same API surface as the
+  real Highlight.js so sidepanel.js works without any changes.
+-->
+<script src="highlighter.js"></script>
+<script src="sidepanel.js"></script>
+</body>
+</html>
