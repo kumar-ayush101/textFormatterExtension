@@ -1,10 +1,11 @@
 /**
- * background.js — GitShare Terminal Service Worker v2
+ * background.js — GitShare Terminal Service Worker v3
  *
- * Key upgrade: replaces info.selectionText (which strips newlines on GitHub's
- * table-based code DOM) with chrome.scripting.executeScript to inject a tiny
- * function that reads window.getSelection() directly from the page context,
- * faithfully preserving all whitespace, indentation, and line breaks.
+ * v3 changes:
+ *   • sanitizeText() — collapses 3+ consecutive newlines to max 2, while
+ *     preserving code indentation (leading whitespace on lines is untouched).
+ *   • Text sanitization runs BEFORE storing to session, so sidepanel.js always
+ *     receives clean input regardless of the source page's DOM structure.
  */
 
 // ── Side-panel: open on action click ────────────────────────────────────────
@@ -31,6 +32,40 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
+// ── Text sanitization ────────────────────────────────────────────────────────
+//
+// Condenses 3 or more consecutive blank lines into exactly 2 (one blank line
+// gap), which is the maximum visual separation used in well-formatted prose.
+// Code indentation (leading spaces/tabs on non-empty lines) is preserved.
+//
+// Why here and not in sidepanel.js?
+//   The service worker is the single choke-point for all text entering the
+//   extension. Sanitizing here keeps sidepanel.js free of preprocessing
+//   concerns and ensures the stored value is always clean.
+//
+function sanitizeText(raw) {
+  if (!raw) return "";
+
+  // Normalize Windows-style line endings to Unix
+  let text = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  // Collapse runs of 3+ newlines (i.e. 2+ consecutive blank lines) to exactly
+  // 2 newlines (1 blank line). This regex matches \n\n\n+ and replaces with \n\n.
+  // We use a generous upper bound (no limit) to catch pathological DOM dumps.
+  text = text.replace(/\n{3,}/g, "\n\n");
+
+  // Strip trailing whitespace from each line (invisible characters from
+  // copy-pasting table cells on GitHub, Notion, etc.) while keeping all
+  // leading whitespace so code indentation is never disturbed.
+  text = text
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n");
+
+  // Trim leading/trailing blank lines from the whole selection
+  return text.trim();
+}
+
 // ── Content script injected into the page to extract selection precisely ─────
 //
 // Why not info.selectionText?
@@ -44,8 +79,6 @@ function extractSelectionFromPage() {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return null;
 
-  // Prefer the range's plain-text serialisation — most faithful to what the
-  // user sees, including indentation on GitHub, GitLab, Bitbucket, etc.
   const raw = sel.toString();
   if (!raw || !raw.trim()) return null;
 
@@ -95,7 +128,7 @@ function extractSelectionFromPage() {
     // Language detection is best-effort; never block the text extraction
   }
 
-  // Normalise language aliases GitHub uses to what Highlight.js expects
+  // Normalise language aliases to what Highlight.js expects
   const langMap = {
     js: "javascript",
     ts: "typescript",
@@ -119,7 +152,6 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== "sendToGitShare") return;
   if (!tab?.id) return;
 
-  // Inject the extractor into the active page and read the real selection
   chrome.scripting
     .executeScript({
       target: { tabId: tab.id },
@@ -128,10 +160,12 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     .then((results) => {
       const payload = results?.[0]?.result;
 
-      // Fallback: if injection failed or returned nothing, use the API value
-      // (better than showing nothing, even if whitespace is imperfect)
-      const text = payload?.text ?? info.selectionText ?? "";
-      if (!text.trim()) return;
+      const rawText = payload?.text ?? info.selectionText ?? "";
+      if (!rawText.trim()) return;
+
+      // ✦ Sanitize: collapse excessive blank lines before storing
+      const text = sanitizeText(rawText);
+      if (!text) return;
 
       chrome.storage.session
         .set({
@@ -142,11 +176,13 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         .catch((err) => console.error("session.set error:", err));
     })
     .catch((err) => {
-      // executeScript can fail on chrome:// pages, PDFs, extension pages, etc.
       console.warn("executeScript failed, falling back to selectionText:", err);
 
-      const text = info.selectionText ?? "";
-      if (!text.trim()) return;
+      const rawText = info.selectionText ?? "";
+      if (!rawText.trim()) return;
+
+      const text = sanitizeText(rawText);
+      if (!text) return;
 
       chrome.storage.session
         .set({

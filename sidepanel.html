@@ -6,31 +6,28 @@
   <title>GitShare Terminal</title>
 
   <!--
-    !! CSP FIX !!
-    All scripts and stylesheets are loaded from local extension files (lib/).
+    All scripts and stylesheets are loaded from local extension files.
     Chrome MV3 extension pages only allow script-src 'self' — no CDN URLs.
-    The highlighter.js file provides a drop-in hljs-compatible API with
-    zero external dependencies.
   -->
   <link rel="stylesheet" href="atom-one-dark.css">
 
   <style>
     /* ── Design tokens ──────────────────────────────────────────────────── */
     :root {
-      --bg-void:        #0a0a0d;
-      --bg-shell:       #0f0f13;
-      --bg-header:      #161620;
-      --bg-gutter:      #13131a;
-      --bg-code:        #0f0f13;
-      --bg-statusbar:   #0c0c10;
+      --bg-void:        #080810;
+      --bg-shell:       #0d0d14;
+      --bg-header:      #13131e;
+      --bg-gutter:      #0f0f18;
+      --bg-code:        #0d0d14;
+      --bg-statusbar:   #09090f;
 
-      --border-subtle:  rgba(255,255,255,0.07);
+      --border-subtle:  rgba(255,255,255,0.065);
       --border-glow:    rgba(99,179,255,0.18);
 
       --text-primary:   #abb2bf;
-      --text-muted:     #52525b;
-      --text-faint:     #27272f;
-      --text-gutter:    #3a3a4a;
+      --text-muted:     #4e4e62;
+      --text-faint:     #232330;
+      --text-gutter:    #363648;
 
       --accent-blue:    #61afef;
       --accent-teal:    #56b6c2;
@@ -43,12 +40,19 @@
       --dot-yellow: #ffbd2e;
       --dot-green:  #28c940;
 
-      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
-      --font-ui:   'SF Mono', 'Segoe UI', system-ui, sans-serif;
+      /* ── Premium font stack — JetBrains Mono first, then Fira Code, Cascadia ── */
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
+                   'Cascadia Mono', 'Consolas', 'Courier New', monospace;
+      --font-ui:   'SF Mono', ui-monospace, 'Segoe UI', system-ui, sans-serif;
 
       --radius-shell: 10px;
       --radius-badge: 4px;
-      --scrollbar-w:  5px;
+
+      /* ── Scrollbar dimensions ─────────────────────────────────────────── */
+      --sb-width:       5px;
+      --sb-thumb:       rgba(255,255,255,0.11);
+      --sb-thumb-hover: rgba(255,255,255,0.22);
+      --sb-track:       transparent;
     }
 
     /* ── Reset ──────────────────────────────────────────────────────────── */
@@ -62,6 +66,9 @@
       height: 100vh;
       overflow: hidden;
       -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+      font-feature-settings: "liga" 1, "calt" 1; /* ligatures for Fira Code / JB Mono */
     }
 
     /* ── Outer shell ────────────────────────────────────────────────────── */
@@ -74,9 +81,9 @@
       border: 1px solid var(--border-subtle);
       background: var(--bg-shell);
       box-shadow:
-        0 0 0 1px rgba(0,0,0,0.6),
-        0 20px 60px rgba(0,0,0,0.7),
-        inset 0 1px 0 rgba(255,255,255,0.04);
+        0 0 0 1px rgba(0,0,0,0.65),
+        0 24px 64px rgba(0,0,0,0.75),
+        inset 0 1px 0 rgba(255,255,255,0.035);
       overflow: hidden;
     }
 
@@ -99,9 +106,9 @@
       flex-shrink: 0;
       transition: filter 0.15s;
     }
-    .dot-r { background: var(--dot-red);    box-shadow: 0 0 5px rgba(255,95,87,0.4); }
-    .dot-y { background: var(--dot-yellow); }
-    .dot-g { background: var(--dot-green);  box-shadow: 0 0 5px rgba(40,201,64,0.3); }
+    .dot-r { background: var(--dot-red);    box-shadow: 0 0 6px rgba(255,95,87,0.45); }
+    .dot-y { background: var(--dot-yellow); box-shadow: 0 0 5px rgba(255,189,46,0.25); }
+    .dot-g { background: var(--dot-green);  box-shadow: 0 0 6px rgba(40,201,64,0.35); }
 
     .titlebar-center {
       flex: 1;
@@ -111,53 +118,87 @@
       gap: 6px;
     }
 
-    .prompt-icon { color: var(--accent-teal); font-size: 11px; opacity: 0.85; }
+    .prompt-icon { color: var(--accent-teal); font-size: 11px; opacity: 0.8; }
 
     .title-text {
       font-size: 11px;
       color: var(--text-muted);
-      letter-spacing: 0.04em;
+      letter-spacing: 0.05em;
       font-family: var(--font-ui);
     }
 
+    /* ── Language badge — two visual modes: code (blue) vs plain (grey) ─── */
     .lang-badge {
       font-size: 9.5px;
       font-family: var(--font-ui);
-      letter-spacing: 0.06em;
+      letter-spacing: 0.07em;
       text-transform: uppercase;
-      color: var(--accent-blue);
-      background: rgba(97,175,239,0.1);
-      border: 1px solid rgba(97,175,239,0.2);
       border-radius: var(--radius-badge);
-      padding: 1px 5px;
+      padding: 1px 6px;
       opacity: 0;
       transform: translateY(2px);
-      transition: opacity 0.25s ease, transform 0.25s ease;
-    }
-    .lang-badge.visible { opacity: 1; transform: translateY(0); }
+      transition: opacity 0.25s ease, transform 0.25s ease,
+                  color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 
-    /* Copy button */
+      /* default = code language (blue) */
+      color: var(--accent-blue);
+      background: rgba(97,175,239,0.1);
+      border: 1px solid rgba(97,175,239,0.22);
+    }
+    .lang-badge.visible        { opacity: 1; transform: translateY(0); }
+
+    /* plaintext mode — neutral grey, visually understated */
+    .lang-badge.plain {
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.04);
+      border-color: rgba(255,255,255,0.1);
+    }
+
+    /* ── Copy button ────────────────────────────────────────────────────── */
     .copy-btn {
       display: flex;
       align-items: center;
-      gap: 4px;
-      background: rgba(255,255,255,0.05);
+      gap: 5px;
+      background: rgba(255,255,255,0.045);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-badge);
       color: var(--text-muted);
       font-family: var(--font-ui);
       font-size: 10px;
-      padding: 3px 8px;
+      padding: 3px 9px;
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: background 0.15s ease, color 0.15s ease,
+                  border-color 0.15s ease, box-shadow 0.15s ease;
       flex-shrink: 0;
-      letter-spacing: 0.03em;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+      min-width: 58px;
+      justify-content: center;
     }
-    .copy-btn:hover { background: rgba(255,255,255,0.09); color: var(--text-primary); border-color: rgba(255,255,255,0.14); }
-    .copy-btn.copied { color: var(--accent-green); border-color: rgba(152,195,121,0.35); background: rgba(152,195,121,0.08); }
-    .copy-btn svg { width: 10px; height: 10px; }
+    .copy-btn:hover {
+      background: rgba(255,255,255,0.085);
+      color: var(--text-primary);
+      border-color: rgba(255,255,255,0.13);
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.04);
+    }
+    .copy-btn:active { transform: scale(0.97); }
 
-    /* ── Line-number gutter + code body ─────────────────────────────────── */
+    /* ✓ Copied! state — green accent */
+    .copy-btn.copied {
+      color: var(--accent-green);
+      border-color: rgba(152,195,121,0.38);
+      background: rgba(152,195,121,0.09);
+      box-shadow: 0 0 8px rgba(152,195,121,0.12);
+    }
+    /* ✗ Failed state — red accent */
+    .copy-btn.copy-error {
+      color: var(--accent-red);
+      border-color: rgba(224,108,117,0.38);
+      background: rgba(224,108,117,0.08);
+    }
+    .copy-btn svg { width: 10px; height: 10px; flex-shrink: 0; }
+
+    /* ── Code viewport ──────────────────────────────────────────────────── */
     .code-viewport {
       display: flex;
       flex: 1;
@@ -165,6 +206,7 @@
       position: relative;
     }
 
+    /* ── Line-number gutter ─────────────────────────────────────────────── */
     .gutter {
       flex-shrink: 0;
       width: 46px;
@@ -173,29 +215,50 @@
       border-right: 1px solid var(--border-subtle);
       overflow: hidden;
       text-align: right;
-      font-size: 11.5px;
+      font-size: 11px;
       line-height: 1.7;
       color: var(--text-gutter);
       user-select: none;
-      transition: opacity 0.2s;
+      transition: opacity 0.2s ease;
     }
     .gutter.hidden { opacity: 0; pointer-events: none; }
-    .gutter-inner { padding-right: 10px; }
+    .gutter-inner  { padding-right: 10px; }
 
+    /* ── Code scroll area ───────────────────────────────────────────────── */
     .code-scroll {
       flex: 1;
       overflow: auto;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(255,255,255,0.1) transparent;
-    }
-    .code-scroll::-webkit-scrollbar { width: var(--scrollbar-w); height: var(--scrollbar-w); }
-    .code-scroll::-webkit-scrollbar-track { background: transparent; }
-    .code-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-    .code-scroll::-webkit-scrollbar-corner { background: transparent; }
 
-    /* The actual <pre><code> area */
+      /* Firefox scrollbar */
+      scrollbar-width: thin;
+      scrollbar-color: var(--sb-thumb) var(--sb-track);
+    }
+
+    /* ── Premium WebKit scrollbar — thin, rounded, dark IDE aesthetic ───── */
+    .code-scroll::-webkit-scrollbar {
+      width: var(--sb-width);
+      height: var(--sb-width);
+    }
+    .code-scroll::-webkit-scrollbar-track {
+      background: var(--sb-track);
+      border-radius: 999px;
+    }
+    .code-scroll::-webkit-scrollbar-thumb {
+      background: var(--sb-thumb);
+      border-radius: 999px;
+      border: 1px solid rgba(0,0,0,0.25);
+      transition: background 0.2s ease;
+    }
+    .code-scroll::-webkit-scrollbar-thumb:hover {
+      background: var(--sb-thumb-hover);
+    }
+    .code-scroll::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+
+    /* ── <pre><code> block ──────────────────────────────────────────────── */
     .code-body {
-      padding: 16px 20px 16px 16px;
+      padding: 16px 20px 24px 16px;
       margin: 0;
       font-family: var(--font-mono);
       font-size: 12.5px;
@@ -208,18 +271,23 @@
       color: var(--text-primary);
     }
 
-    /* hljs overrides — keep background transparent */
-    .hljs { background: transparent !important; padding: 0 !important; font-size: inherit !important; line-height: inherit !important; }
+    /* Override hljs defaults */
+    .hljs {
+      background: transparent !important;
+      padding: 0 !important;
+      font-size: inherit !important;
+      line-height: inherit !important;
+    }
 
     /* Per-line hover highlight */
     .code-body .line {
       display: block;
       border-radius: 2px;
-      transition: background 0.08s;
+      transition: background 0.07s ease;
       padding: 0 4px;
       margin: 0 -4px;
     }
-    .code-body .line:hover { background: rgba(255,255,255,0.04); }
+    .code-body .line:hover { background: rgba(255,255,255,0.038); }
 
     /* ── Placeholder ─────────────────────────────────────────────────────── */
     .placeholder-wrap {
@@ -234,21 +302,31 @@
     }
     .placeholder-wrap.visible { display: flex; }
 
-    .placeholder-icon { font-size: 28px; opacity: 0.18; filter: grayscale(1); }
+    .placeholder-icon {
+      font-size: 28px;
+      opacity: 0.15;
+      filter: grayscale(1);
+      line-height: 1;
+    }
 
     .placeholder-title {
       font-family: var(--font-ui);
       font-size: 13px;
       color: var(--text-muted);
-      letter-spacing: 0.01em;
+      letter-spacing: 0.02em;
     }
 
-    .placeholder-steps { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+    .placeholder-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 4px;
+    }
 
     .step {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 9px;
       font-family: var(--font-ui);
       font-size: 10.5px;
       color: var(--text-faint);
@@ -293,25 +371,26 @@
       width: 5px; height: 5px;
       border-radius: 50%;
       background: var(--text-faint);
+      transition: background 0.3s ease, box-shadow 0.3s ease;
     }
     .status-dot.live {
       background: var(--accent-green);
-      box-shadow: 0 0 4px var(--accent-green);
-      animation: pulse 2s infinite;
+      box-shadow: 0 0 5px var(--accent-green);
+      animation: pulse 2.4s ease-in-out infinite;
     }
 
     @keyframes pulse {
       0%, 100% { opacity: 1; }
-      50%       { opacity: 0.4; }
+      50%       { opacity: 0.35; }
     }
 
-    /* ── Fade-in for new content ─────────────────────────────────────────── */
+    /* ── Fade-slide-in for new content ───────────────────────────────────── */
     @keyframes fadeSlideIn {
-      from { opacity: 0; transform: translateY(3px); }
+      from { opacity: 0; transform: translateY(4px); }
       to   { opacity: 1; transform: translateY(0); }
     }
     .code-scroll.animating .code-body {
-      animation: fadeSlideIn 0.18s ease forwards;
+      animation: fadeSlideIn 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
     }
   </style>
 </head>
@@ -333,8 +412,8 @@
       <span class="lang-badge" id="lang-badge">—</span>
     </div>
 
-    <button class="copy-btn" id="copy-btn" title="Copy to clipboard">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+    <button class="copy-btn" id="copy-btn" title="Copy raw text to clipboard">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
         <rect x="5" y="5" width="8" height="9" rx="1.5"/>
         <path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H11"/>
       </svg>
@@ -357,9 +436,18 @@
       <div class="placeholder-icon">⌨︎</div>
       <div class="placeholder-title">GitShare Terminal</div>
       <div class="placeholder-steps">
-        <div class="step"><div class="step-num">1</div>Highlight any code on a webpage</div>
-        <div class="step"><div class="step-num">2</div>Right-click → "Send to GitShare Terminal"</div>
-        <div class="step"><div class="step-num">3</div>Watch it render with syntax highlighting</div>
+        <div class="step">
+          <div class="step-num">1</div>
+          Highlight any code or text on a webpage
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          Right-click → "Send to GitShare Terminal"
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          Watch it render with syntax highlighting
+        </div>
       </div>
     </div>
 
@@ -375,13 +463,13 @@
     </div>
     <div class="status-right">
       <div class="status-item" id="status-lines" style="display:none">
-        <span id="line-count">0</span> lines
+        <span id="line-count">0</span>&nbsp;lines
       </div>
       <div class="status-item" id="status-chars" style="display:none">
-        <span id="char-count">0</span> chars
+        <span id="char-count">0</span>&nbsp;chars
       </div>
       <div class="status-item accent" id="status-lang" style="display:none">
-        <span id="lang-label">plain</span>
+        <span id="lang-label">plain text</span>
       </div>
     </div>
   </div>
@@ -389,9 +477,9 @@
 </div>
 
 <!--
-  Load local scripts only — no CDN, no CSP violations.
-  highlighter.js exposes window.hljs with the same API surface as the
-  real Highlight.js so sidepanel.js works without any changes.
+  Local scripts only — no CDN, no CSP violations.
+  highlighter.js exposes window.hljs with the same API surface as
+  real Highlight.js so sidepanel.js works without modification.
 -->
 <script src="highlighter.js"></script>
 <script src="sidepanel.js"></script>

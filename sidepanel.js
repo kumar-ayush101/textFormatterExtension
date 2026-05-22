@@ -1,12 +1,14 @@
 /**
- * sidepanel.js — GitShare Terminal v2
+ * sidepanel.js — GitShare Terminal v3
  *
- * Responsibilities:
- *   • Listen for storage updates from the background service worker
- *   • Run Highlight.js on the received text (auto-detect or use hint)
- *   • Render line numbers in the gutter, synced to the code scroll
- *   • Update the status bar (language, line count, char count)
- *   • Animate content transitions and handle the copy button
+ * v3 changes:
+ *   • Stricter language auto-detection: requires a meaningful "code signal
+ *     score" before attempting hljs auto-detect; low-confidence results fall
+ *     back to plaintext so prose is never mis-labelled as SQL/Bash.
+ *   • Copy button: copies raw text (no line numbers), shows "✓ Copied!" with
+ *     green accent for 2 s then reverts — full SVG icon restored on reset.
+ *   • Badge styling: plaintext uses a neutral grey palette vs the blue used
+ *     for real languages, making the distinction visually obvious.
  */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -29,7 +31,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const liveDot       = document.getElementById("live-dot");
   const statusLiveEl  = document.getElementById("status-live");
 
-  // Guard: fail gracefully if DOM is broken
   if (!codeEl || !gutter || !placeholder) {
     console.error("GitShare: required DOM elements missing.");
     return;
@@ -39,60 +40,106 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentRawText = "";
   let copyTimer      = null;
 
-  // ── Highlight.js configuration ────────────────────────────────────────────
-  // Limit auto-detection to common languages to avoid false positives on
-  // plain prose (hljs.highlightAuto can be overconfident on short snippets).
-  hljs.configure({
-    languages: [
-      "javascript", "typescript", "python", "rust", "go", "java", "cpp", "c",
-      "csharp", "php", "ruby", "swift", "kotlin", "bash", "shell", "sql",
-      "html", "xml", "css", "scss", "json", "yaml", "dockerfile",
-      "markdown", "graphql", "hcl",
-    ],
-    ignoreUnescapedHTML: true,
-  });
+  // ── hljs configuration ────────────────────────────────────────────────────
+  hljs.configure({ ignoreUnescapedHTML: true });
+
+  // ── Code-signal scoring — stricter than before ────────────────────────────
+  //
+  // Each rule carries a weight. We accumulate a score; auto-detection is only
+  // attempted when the score clears CONFIDENCE_THRESHOLD. This prevents prose
+  // sentences that happen to contain colons or dashes from triggering hljs.
+  //
+  // Rules are tuned so that:
+  //   • A single {  }  or  () scores enough to attempt detection
+  //   • SQL / Bash false-positives (caused by plain English words like "select",
+  //     "from", "export", "echo") require an additional structural signal
+  //   • Short prose with no brackets/operators never crosses the threshold
+  //
+  const CODE_SIGNALS = [
+    // Strong structural signals (rare in prose)
+    { pattern: /[{}]/, weight: 3 },                          // curly braces
+    { pattern: /\(.*\)/, weight: 2 },                        // parentheses pair
+    { pattern: /\[.*\]/, weight: 2 },                        // square-bracket pair
+    { pattern: /;$|;\s*$/m, weight: 3 },                     // line-ending semicolons
+    { pattern: /^\s*(def |function |class |import |const |let |var |pub |fn |func )/m, weight: 4 }, // declaration keywords
+    { pattern: /^\s*(if|else|for|while|switch|return|yield)\s*[\(\{]/m, weight: 3 },  // control flow
+    { pattern: /=>|->|::|<<|>>/, weight: 2 },                // operator combos
+    { pattern: /^\s{4,}/m, weight: 1 },                      // 4-space indent (mild)
+    { pattern: /\t\t/, weight: 1 },                          // double-tab indent (mild)
+    // Markup
+    { pattern: /<[a-zA-Z][^>]*>[\s\S]*?<\/[a-zA-Z]+>/, weight: 4 }, // HTML tag pairs
+    { pattern: /^\s*[\w-]+:\s+\S/m, weight: 1 },             // YAML-style key: value
+    // Data formats
+    { pattern: /^\s*"[\w-]+":\s*["{[\d]/, weight: 3 },      // JSON key-value
+    // Operators
+    { pattern: /[+\-*\/%]=|===|!==|&&|\|\|/, weight: 2 },   // compound operators
+  ];
+
+  const CONFIDENCE_THRESHOLD = 4;
+
+  /**
+   * Returns a numeric confidence score indicating how likely the text is code.
+   * Scoring is additive; first match per rule contributes its weight once.
+   */
+  function codeConfidenceScore(text) {
+    return CODE_SIGNALS.reduce(
+      (score, { pattern, weight }) => score + (pattern.test(text) ? weight : 0),
+      0
+    );
+  }
+
+  // Languages that are especially prone to false-positives on prose.
+  // Even when hljs detects one of these, we require a higher confidence score
+  // before accepting the result.
+  const PRONE_TO_FP = new Set(["sql", "bash", "shell", "markdown", "yaml"]);
+  const HIGH_CONFIDENCE_THRESHOLD = 7; // stricter gate for FP-prone langs
 
   // ── Core render function ──────────────────────────────────────────────────
-  /**
-   * @param {string} text      — raw source text
-   * @param {string|null} lang — language hint from background script (or null)
-   */
   function render(text, lang) {
     currentRawText = text;
 
-    // 1. Syntax-highlight ──────────────────────────────────────────────────
     let result;
     let resolvedLang = "plain";
 
+    // ── 1. Explicit lang hint from the page (highest trust) ───────────────
     if (lang) {
-      // Use the hint if Highlight.js knows that language
       const knownLangs = hljs.listLanguages();
       if (knownLangs.includes(lang)) {
         try {
           result = hljs.highlight(text, { language: lang, ignoreIllegals: true });
           resolvedLang = lang;
-        } catch (_) { /* fall through to auto-detect */ }
+        } catch (_) { /* fall through */ }
       }
     }
 
+    // ── 2. Auto-detection with confidence gating ───────────────────────────
     if (!result) {
-      // Auto-detect — but only if the snippet is plausibly code (has at
-      // least one of: brackets, semicolons, colons, def/function keywords).
-      const looksLikeCode = /[{}\[\]();:<>]|^\s*(def |function |class |import |const |let |var |public |private )/m.test(text);
-      if (looksLikeCode) {
-        result = hljs.highlightAuto(text);
-        resolvedLang = result.language ?? "plain";
-      } else {
-        // Plain text — just escape HTML and show as-is
+      const score = codeConfidenceScore(text);
+
+      if (score >= CONFIDENCE_THRESHOLD) {
+        const detected = hljs.highlightAuto(text);
+        const detectedLang = detected.language ?? null;
+
+        if (detectedLang) {
+          // Extra gate: FP-prone languages need a higher confidence bar
+          const isFpProne = PRONE_TO_FP.has(detectedLang);
+          if (!isFpProne || score >= HIGH_CONFIDENCE_THRESHOLD) {
+            result = detected;
+            resolvedLang = detectedLang;
+          }
+        }
+      }
+
+      // Fall back to plain text if detection failed or was rejected
+      if (!result) {
         result = { value: escapeHtml(text) };
         resolvedLang = "plain";
       }
     }
 
-    // 2. Wrap each line in a <span class="line"> for hover highlighting ─────
+    // ── 3. Wrap each line in a hover-able <span class="line"> ─────────────
     const lines = result.value.split("\n");
-
-    // Trim a trailing empty line that appears when text ends with \n
+    // Trim trailing phantom empty line when text ends with \n
     if (lines.length > 1 && lines[lines.length - 1].trim() === "") {
       lines.pop();
     }
@@ -101,18 +148,17 @@ document.addEventListener("DOMContentLoaded", () => {
       .map((line) => `<span class="line">${line || " "}</span>`)
       .join("\n");
 
-    // 3. Build gutter line numbers ─────────────────────────────────────────
+    // ── 4. Gutter ─────────────────────────────────────────────────────────
     renderGutter(lines.length);
 
-    // 4. Update language badge & status bar ───────────────────────────────
+    // ── 5. Meta ───────────────────────────────────────────────────────────
     updateMeta(resolvedLang, lines.length, text.length);
 
-    // 5. Animate in ───────────────────────────────────────────────────────
+    // ── 6. Animate in ─────────────────────────────────────────────────────
     placeholder.classList.remove("visible");
     codeScroll.classList.add("animating");
     requestAnimationFrame(() => {
       codeScroll.scrollTop = 0;
-      // Remove animation class after it completes so it can re-trigger
       setTimeout(() => codeScroll.classList.remove("animating"), 200);
     });
   }
@@ -120,47 +166,45 @@ document.addEventListener("DOMContentLoaded", () => {
   // ── Gutter renderer ───────────────────────────────────────────────────────
   function renderGutter(lineCount) {
     if (lineCount < 2) {
-      // Single-line snippets don't need a gutter
       gutter.classList.add("hidden");
       gutterInner.innerHTML = "";
       return;
     }
-
     gutter.classList.remove("hidden");
     gutterInner.innerHTML = Array.from(
       { length: lineCount },
       (_, i) => `<div>${i + 1}</div>`
     ).join("");
 
-    // Sync gutter scroll with code scroll
-    codeScroll.onscroll = () => {
-      gutter.scrollTop = codeScroll.scrollTop;
-    };
+    codeScroll.onscroll = () => { gutter.scrollTop = codeScroll.scrollTop; };
   }
 
   // ── Meta / status bar update ──────────────────────────────────────────────
   function updateMeta(lang, lines, chars) {
-    const displayLang = lang === "plain" ? "plain text" : lang;
+    const isPlain = lang === "plain";
+    const displayLang = isPlain ? "plain text" : lang;
 
-    // Title bar badge
-    langBadge.textContent = lang === "plain" ? "TXT" : lang.toUpperCase();
+    // Badge: neutral grey for plaintext, blue for a detected language
+    langBadge.textContent = isPlain ? "TXT" : lang.toUpperCase();
+    langBadge.classList.toggle("plain", isPlain);
     langBadge.classList.add("visible");
 
-    // Status bar
-    lineCountEl.textContent  = lines;
-    charCountEl.textContent  = chars.toLocaleString();
-    langLabelEl.textContent  = displayLang;
+    lineCountEl.textContent = lines;
+    charCountEl.textContent = chars.toLocaleString();
+    langLabelEl.textContent = displayLang;
 
     statusLines.style.display = "";
     statusChars.style.display = "";
     statusLang.style.display  = "";
 
-    // Briefly flash the live indicator on new content
-    liveDot.style.background = "var(--accent-amber)";
-    statusLiveEl.textContent = "updated";
+    // Flash live indicator amber on new content, return to green after 1.2 s
+    liveDot.style.background    = "var(--accent-amber)";
+    liveDot.style.boxShadow     = "0 0 4px var(--accent-amber)";
+    statusLiveEl.textContent    = "updated";
     setTimeout(() => {
-      liveDot.style.background = "";
-      statusLiveEl.textContent = "listening";
+      liveDot.style.background  = "";
+      liveDot.style.boxShadow   = "";
+      statusLiveEl.textContent  = "listening";
     }, 1200);
   }
 
@@ -170,14 +214,14 @@ document.addEventListener("DOMContentLoaded", () => {
     codeEl.innerHTML = "";
     gutterInner.innerHTML = "";
     gutter.classList.add("hidden");
-    langBadge.classList.remove("visible");
+    langBadge.classList.remove("visible", "plain");
     statusLines.style.display = "none";
     statusChars.style.display = "none";
     statusLang.style.display  = "none";
     placeholder.classList.add("visible");
   }
 
-  // ── HTML escape helper ────────────────────────────────────────────────────
+  // ── HTML escape ───────────────────────────────────────────────────────────
   function escapeHtml(str) {
     return str
       .replace(/&/g, "&amp;")
@@ -186,41 +230,46 @@ document.addEventListener("DOMContentLoaded", () => {
       .replace(/"/g, "&quot;");
   }
 
-  // ── Copy button ───────────────────────────────────────────────────────────
+  // ── Copy button — full UX: instant copy, 2 s feedback, clean revert ───────
+  const COPY_ICON_SVG = `
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <rect x="5" y="5" width="8" height="9" rx="1.5"/>
+      <path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H11"/>
+    </svg>`;
+
+  function resetCopyBtn() {
+    copyBtn.innerHTML = `${COPY_ICON_SVG} Copy`;
+    copyBtn.classList.remove("copied", "copy-error");
+  }
+
   copyBtn.addEventListener("click", () => {
     if (!currentRawText) return;
 
+    // Instant optimistic UI update — don't wait for the async clipboard call
+    clearTimeout(copyTimer);
+
     navigator.clipboard.writeText(currentRawText).then(() => {
-      copyBtn.textContent = "✓ Copied";
+      copyBtn.innerHTML = "✓&nbsp;Copied!";
       copyBtn.classList.add("copied");
-      clearTimeout(copyTimer);
-      copyTimer = setTimeout(() => {
-        copyBtn.innerHTML = `
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="5" y="5" width="8" height="9" rx="1.5"/>
-            <path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H11"/>
-          </svg>
-          Copy`;
-        copyBtn.classList.remove("copied");
-      }, 2000);
+      copyBtn.classList.remove("copy-error");
+      copyTimer = setTimeout(resetCopyBtn, 2000);
     }).catch(() => {
-      copyBtn.textContent = "Failed";
-      clearTimeout(copyTimer);
-      copyTimer = setTimeout(() => {
-        copyBtn.textContent = "Copy";
-      }, 1500);
+      copyBtn.innerHTML = "✗&nbsp;Failed";
+      copyBtn.classList.add("copy-error");
+      copyBtn.classList.remove("copied");
+      copyTimer = setTimeout(resetCopyBtn, 1500);
     });
   });
 
   // ── Hydrate from session storage on panel open ────────────────────────────
-  chrome.storage.session.get(["sharedText", "detectedLang"], (result) => {
+  chrome.storage.session.get(["sharedText", "detectedLang"], (res) => {
     if (chrome.runtime.lastError) {
       console.error("session.get error:", chrome.runtime.lastError.message);
       showPlaceholder();
       return;
     }
-    if (result?.sharedText?.trim()) {
-      render(result.sharedText, result.detectedLang ?? null);
+    if (res?.sharedText?.trim()) {
+      render(res.sharedText, res.detectedLang ?? null);
     } else {
       showPlaceholder();
     }
@@ -229,11 +278,9 @@ document.addEventListener("DOMContentLoaded", () => {
   // ── Real-time updates from background service worker ──────────────────────
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "session") return;
-
     if ("sharedText" in changes) {
       const text = changes.sharedText.newValue ?? "";
       const lang = changes.detectedLang?.newValue ?? null;
-
       if (text.trim()) {
         render(text, lang);
       } else {
